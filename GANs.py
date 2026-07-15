@@ -15,7 +15,7 @@ parser.add_argument("--img_size", type=int, default=28) # porque es 28 x 28
 parser.add_argument("--channels", type=int, default=1) # porque es blanco y negro
 parser.add_argument("--latent_dim", type=int, default=100) # Cuantas dimensiones tiene el espacio latente - Vector de entrada de GENERADORA
 parser.add_argument("--batch_size", type=int, default=128) # Cuantas imagenes entran en lote
-parser.add_argument("--epoch", type=int, default=30) # Cuantas epocas de entrenamiento
+parser.add_argument("--epoch", type=int, default=100) # Cuantas epocas de entrenamiento
 parser.add_argument("--lr", type=float, default=0.0002)
 parser.add_argument("--b1", type=float, default=0.5)
 parser.add_argument("--b2", type=float, default=0.999)
@@ -143,10 +143,52 @@ def train_step(images):
     )
     return gen_loss, disc_loss
 
+def generate_and_save_images(
+    model,
+    epoch,
+    fixed_noise,
+    output_dir="training_images"
+):
+    os.makedirs(output_dir, exist_ok=True)
+
+    predictions = model(fixed_noise, training=False)
+
+    fig = plt.figure(figsize=(10, 10))
+
+    for i in range(predictions.shape[0]):
+        plt.subplot(5, 5, i + 1)
+
+        img = predictions[i, :, :, 0]
+
+        # Si la última activación del generador es tanh:
+        # convierte de [-1, 1] a [0, 1]
+        img = (img + 1.0) / 2.0
+        img = tf.clip_by_value(img, 0.0, 1.0)
+
+        plt.imshow(img, cmap="gray")
+        plt.axis("off")
+
+    plt.suptitle(f"Época {epoch}", fontsize=16)
+    plt.tight_layout()
+
+    plt.savefig(
+        os.path.join(output_dir, f"epoch_{epoch:04d}.png"),
+        bbox_inches="tight"
+    )
+
+    plt.close(fig)
 # =========================
 # TRAIN
 # =========================
 def train(dataset, epochs):
+    generator_history = []
+    discriminator_history = []
+
+    generator_std_history = []
+    discriminator_std_history = []
+
+    fixed_noise = tf.random.normal([25, args.latent_dim], seed=42)
+
     for epoch in range(epochs):
         start = time.time()
 
@@ -158,13 +200,25 @@ def train(dataset, epochs):
 
             generator_losses.append(gen_loss.numpy())
             discriminator_losses.append(disc_loss.numpy())
+        
+        gen_mean = np.mean(generator_losses)
+        disc_mean = np.mean(discriminator_losses)
+
+        gen_std = np.std(generator_losses)
+        disc_std = np.std(discriminator_losses)
+
+        generator_history.append(gen_mean)
+        discriminator_history.append(disc_mean)
+
+        generator_std_history.append(gen_std)
+        discriminator_std_history.append(disc_std)
 
         print(
             f"Generador     -> "
             f"Media: {np.mean(generator_losses):.4f} | "
             f"Desv: {np.std(generator_losses):.4f}"
         )
-
+        
         print(
             f"Discriminador -> "
             f"Media: {np.mean(discriminator_losses):.4f} | "
@@ -173,18 +227,64 @@ def train(dataset, epochs):
 
         print(f"Epoch {epoch+1} - Time: {time.time()-start:.2f}s\n")
 
-train(train_dataset, args.epoch)
+        generate_and_save_images(
+            model=generator,
+            epoch=epoch + 1,
+            fixed_noise=fixed_noise
+        )
 
-noise = tf.random.normal([25, args.latent_dim])
-generated_images = generator(noise, training=False)
-plt.figure(figsize=(10,10))
-for i in range(25):
-    plt.subplot(5,5,i+1)
-    img = generated_images[i,:,:,0]
+    return {
+        "generator_loss": generator_history,
+        "discriminator_loss": discriminator_history,
+        "generator_std": generator_std_history,
+        "discriminator_std": discriminator_std_history
+    }
+
+history = train(train_dataset, args.epoch)
+
+def plot_training_history(generator_history, discriminator_history):
+    epochs = np.arange(1, len(generator_history) + 1)
+
+    plt.figure(figsize=(10, 5))
+
+    plt.plot(
+        epochs,
+        generator_history,
+        label="Pérdida del generador"
+    )
+
+    plt.plot(
+        epochs,
+        discriminator_history,
+        label="Pérdida del discriminador"
+    )
+
+    plt.yscale("log")
+
+    plt.xlabel("Época")
+    plt.ylabel("Pérdida media")
+    plt.title("Evolución del entrenamiento de la GAN")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    
+    plt.show()
+
+plot_training_history(
+    history["generator_loss"],
+    history["discriminator_loss"]
+)
+
+#noise = tf.random.normal([25, args.latent_dim])
+#generated_images = generator(noise, training=False)
+#plt.figure(figsize=(10,10))
+#for i in range(25):
+ #   plt.subplot(5,5,i+1)
+  #  img = generated_images[i,:,:,0]
 
     # si usás tanh
-    img = (img + 1) / 2.0
+   # img = (img + 1) / 2.0
 
-    plt.imshow(img, cmap="gray")
-    plt.axis("off")
-plt.show()
+    #plt.imshow(img, cmap="gray")
+    #plt.axis("off")
+#plt.show()
